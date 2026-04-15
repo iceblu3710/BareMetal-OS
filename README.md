@@ -173,3 +173,29 @@ Copy the `BOOTX64.EFI` file to `/EFI/BOOT` on your USB drive and boot your syste
 
 
 // EOF
+
+
+## POSIX host validation
+
+Run the full POSIX host test suite with:
+
+	./posix/tests/run_all_host_tests.sh
+
+Run the client app self-test with:
+
+	./posix/tests/run_bm_client_app.sh
+
+# POSIX layer (bootstrap)
+
+A starter POSIX-compatibility scaffold now lives in `posix/` and is intended to support future shell/editor/tool ports.
+
+- Header/API surface: `posix/include/posix_layer.h`
+- Kernel ABI contract: `posix/include/bm_kernel_abi.h`
+- Wrapper implementation (host backend + backend hooks): `posix/src/posix_layer.c`
+
+The POSIX layer provides a wrapper surface plus a versioned BareMetal kernel ABI contract (`BM_KERNEL_ABI_V1`) and explicit backend binding for integration.
+
+## Additional guides
+
+- [Partition and format a drive on a live system](docs/LIVE_DRIVE_PARTITION_FORMAT.md)
+- [v2 ABI + in-OS disk utility design draft](docs/IN_OS_DISK_UTILITY_DESIGN.md)
