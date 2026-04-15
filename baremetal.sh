@@ -39,7 +39,7 @@ cmd=( qemu-system-x86_64
 # AHCI
 #	-device ide-hd,drive=disk0
 # VIRTIO-Block
-	-device virtio-blk,drive=disk0 #,disable-legacy=on,disable-modern=false
+	-device virtio-blk,drive=disk0,serial=BMBOOT000 #,disable-legacy=on,disable-modern=false
 # VIRTIO-SCSI
 #	-device virtio-scsi-pci #,disable-legacy=on,disable-modern=false
 #	-device scsi-hd,drive=disk0
@@ -99,6 +99,26 @@ fi
 # see if BMFS_SIZE was defined for custom disk sizes
 if [ "x$BMFS_SIZE" = x ]; then
 	BMFS_SIZE=128
+fi
+# see if DATAFS_SIZE was defined for custom ext2 data disk sizes
+if [ "x$DATAFS_SIZE" = x ]; then
+	DATAFS_SIZE=512
+fi
+# see if DATAFS_FS was defined for filesystem format type
+if [ "x$DATAFS_FS" = x ]; then
+	DATAFS_FS=ext3
+fi
+# set a predictable serial for the data disk to simplify kernel selection logic
+if [ "x$DATAFS_SERIAL" = x ]; then
+	DATAFS_SERIAL=BMDATA0001
+fi
+# expected NVS device index for the data disk inside the kernel
+if [ "x$DATAFS_NVS_ID" = x ]; then
+	DATAFS_NVS_ID=1
+fi
+# set ENABLE_DATAFS=0 to run without attaching the ext data disk
+if [ "x$ENABLE_DATAFS" = x ]; then
+	ENABLE_DATAFS=1
 fi
 
 function baremetal_clean {
@@ -190,6 +210,40 @@ function init_imgs { # arg 1 is BMFS size in MiB
 	cd ..
 }
 
+# Append the optional ext data disk to a qemu argument array
+function append_datafs_cmd { # arg 1 is array variable name
+	local -n qcmd_ref=$1
+	if [ "$ENABLE_DATAFS" != "1" ]; then
+		return
+	fi
+	if [ ! -f "sys/ext_data.img" ]; then
+		echo "Warning: sys/ext_data.img is missing. Use './baremetal.sh datafs' to create it."
+		return
+	fi
+	qcmd_ref+=( -drive id=disk1,file="sys/ext_data.img",if=none,format=raw )
+	qcmd_ref+=( -device virtio-blk,drive=disk1,serial=$DATAFS_SERIAL )
+}
+
+# Initialize data disk image for a Linux ext2/3 filesystem
+function init_data_img { # arg 1 is DataFS size in MiB
+	echo -n "Creating data disk image file... "
+	cd sys
+	dd if=/dev/zero of=ext_data.img count=$1 bs=1048576 > /dev/null 2>&1
+	if [ -x "$(command -v mke2fs)" ]; then
+		mke2fs -q -t "$DATAFS_FS" -L BMDATA ext_data.img
+		echo "OK ($DATAFS_FS formatted)"
+	else
+		echo "OK (unformatted, install e2fsprogs for auto-format)"
+	fi
+	cat > ext_data.meta <<EOF
+DATAFS_FS=$DATAFS_FS
+DATAFS_SIZE_MIB=$1
+DATAFS_SERIAL=$DATAFS_SERIAL
+DATAFS_NVS_ID=$DATAFS_NVS_ID
+EOF
+	cd ..
+}
+
 function update_dir {
 	echo "Updating $1..."
 	cd "$1"
@@ -234,6 +288,7 @@ function baremetal_build {
 	echo "OK"
 
 	init_imgs $BMFS_SIZE
+	init_data_img $DATAFS_SIZE
 
 	cd "$OUTPUT_DIR"
 
@@ -359,21 +414,25 @@ function baremetal_run {
 	baremetal_sys_check
 	echo "Starting QEMU..."
 
-	cmd+=( -name "BareMetal OS" )
+	local qcmd=( "${cmd[@]}" )
+	append_datafs_cmd qcmd
+	qcmd+=( -name "BareMetal OS" )
 
-	"${cmd[@]}" #execute the cmd string
+	"${qcmd[@]}" #execute the cmd string
 }
 
 function baremetal_run-uefi {
 	baremetal_sys_check
 	echo "Starting QEMU (UEFI)..."
 
-	cmd+=( -bios sys/OVMF.fd )
-	cmd+=( -name "BareMetal OS UEFI" )
+	local qcmd=( "${cmd[@]}" )
+	append_datafs_cmd qcmd
+	qcmd+=( -bios sys/OVMF.fd )
+	qcmd+=( -name "BareMetal OS UEFI" )
 
 	#execute the cmd string
 	if [ -x "$(command -v mformat)" ]; then
-		"${cmd[@]}"
+		"${qcmd[@]}"
 	else
 		echo -n "Unable to run UEFI image due to missing mtools"
 	fi
@@ -443,6 +502,111 @@ function baremetal_bnr-uefi {
 	baremetal_run-uefi
 }
 
+function baremetal_datafs {
+	baremetal_sys_check
+	init_data_img "$DATAFS_SIZE"
+}
+
+function baremetal_datafs_info {
+	baremetal_sys_check
+	if [ ! -f "sys/ext_data.img" ]; then
+		echo "sys/ext_data.img is missing. Use './baremetal.sh datafs' to create it."
+		exit 1
+	fi
+	if [ -x "$(command -v dumpe2fs)" ]; then
+		dumpe2fs -h sys/ext_data.img | sed -n '1,30p'
+	else
+		echo "Install e2fsprogs to inspect ext_data.img (missing dumpe2fs)"
+	fi
+}
+
+function baremetal_datafs_manifest {
+	baremetal_sys_check
+	if [ -f "sys/ext_data.meta" ]; then
+		cat sys/ext_data.meta
+	else
+		echo "sys/ext_data.meta is missing. Use './baremetal.sh datafs' to create it."
+		exit 1
+	fi
+}
+
+function baremetal_datafs_check {
+	baremetal_sys_check
+	if [ ! -f "sys/ext_data.img" ]; then
+		echo "sys/ext_data.img is missing. Use './baremetal.sh datafs' to create it."
+		exit 1
+	fi
+	if [ -x "$(command -v e2fsck)" ]; then
+		e2fsck -fn sys/ext_data.img
+	else
+		echo "Install e2fsprogs to validate ext_data.img (missing e2fsck)"
+	fi
+}
+
+function baremetal_datafs_replay_test {
+	baremetal_sys_check
+	if [ ! -f "sys/ext_data.img" ]; then
+		echo "sys/ext_data.img is missing. Use './baremetal.sh datafs' to create it."
+		exit 1
+	fi
+	if [ ! -x "$(command -v e2fsck)" ]; then
+		echo "Install e2fsprogs to run replay test (missing e2fsck)"
+		exit 1
+	fi
+
+	cp sys/ext_data.img sys/ext_data_replay.img
+
+	# Mark the copied image as dirty to exercise recovery-oriented fsck flow.
+	if [ -x "$(command -v debugfs)" ]; then
+		debugfs -w -R "dirty_filesys" sys/ext_data_replay.img > /dev/null 2>&1
+	fi
+
+	echo "Running replay-oriented fsck on sys/ext_data_replay.img ..."
+	e2fsck -fy sys/ext_data_replay.img | tee sys/ext_data_replay.log
+}
+
+function baremetal_datafs_populate {
+	baremetal_sys_check
+	if [ ! -f "sys/ext_data.img" ]; then
+		echo "sys/ext_data.img is missing. Use './baremetal.sh datafs' to create it."
+		exit 1
+	fi
+	if [ ! -x "$(command -v debugfs)" ]; then
+		echo "Install e2fsprogs to populate ext_data.img (missing debugfs)"
+		exit 1
+	fi
+
+	tmp_payload=$(mktemp)
+	echo "BareMetal ext3 payload $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp_payload"
+
+	# Create deterministic content used by future kernel-side read/write tests
+	debugfs -w -R "mkdir /bmtest" sys/ext_data.img > /dev/null 2>&1
+	debugfs -w -R "mkdir /bmtest/smoke" sys/ext_data.img > /dev/null 2>&1
+	debugfs -w -R "write $tmp_payload /bmtest/smoke/probe.txt" sys/ext_data.img > /dev/null
+
+	rm -f "$tmp_payload"
+	echo "Wrote /bmtest/smoke/probe.txt to sys/ext_data.img"
+}
+
+function baremetal_ext23_scaffold {
+	baremetal_src_check
+	if [ ! -x "tools/ext23_kernel_scaffold.sh" ]; then
+		echo "Missing tools/ext23_kernel_scaffold.sh"
+		exit 1
+	fi
+	./tools/ext23_kernel_scaffold.sh --repo src/BareMetal
+}
+
+function baremetal_ext23_emu_test {
+	baremetal_src_check
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_emulator_smoke.sh" ]; then
+		echo "Missing tools/ext23_emulator_smoke.sh"
+		exit 1
+	fi
+	./tools/ext23_emulator_smoke.sh
+}
+
 function baremetal_app {
 	baremetal_sys_check
 	cd sys
@@ -469,6 +633,14 @@ function baremetal_help {
 	echo "run      - Run the OS via QEMU"
 	echo "run-uefi - Run the OS via QEMU in UEFI mode"
 	echo "run-2    - Run a second instance of BareMetal for network testing"
+	echo "datafs   - Create or refresh sys/ext_data.img for ext2/3 data tests"
+	echo "datafs-info - Show ext filesystem metadata for sys/ext_data.img"
+	echo "datafs-manifest - Show expected kernel data disk selection metadata"
+	echo "datafs-populate - Seed ext_data.img with deterministic smoke-test files"
+	echo "datafs-check - Run e2fsck (-fn) against ext_data.img"
+	echo "datafs-replay-test - Run replay-oriented fsck flow on a copied ext_data image"
+	echo "ext23-scaffold - Bootstrap fs/cache/vfs/ext2/layout/journal scaffolds in src/BareMetal"
+	echo "ext23-emu-test - Run vertical milestone smoke flow (datafs+scaffold+build+qemu)"
 	echo "vdi      - Generate VDI disk image for VirtualBox"
 	echo "vmdk     - Generate VMDK disk image for VMware"
 	echo "vpc      - Generate VPC disk image for HyperV"
@@ -512,6 +684,22 @@ elif [ $# -eq 1 ]; then
 		baremetal_run-uefi
 	elif [ "$1" == "run-2" ]; then
 		baremetal_run_netclient
+	elif [ "$1" == "datafs" ]; then
+		baremetal_datafs
+	elif [ "$1" == "datafs-info" ]; then
+		baremetal_datafs_info
+	elif [ "$1" == "datafs-manifest" ]; then
+		baremetal_datafs_manifest
+	elif [ "$1" == "datafs-populate" ]; then
+		baremetal_datafs_populate
+	elif [ "$1" == "datafs-check" ]; then
+		baremetal_datafs_check
+	elif [ "$1" == "datafs-replay-test" ]; then
+		baremetal_datafs_replay_test
+	elif [ "$1" == "ext23-scaffold" ]; then
+		baremetal_ext23_scaffold
+	elif [ "$1" == "ext23-emu-test" ]; then
+		baremetal_ext23_emu_test
 	elif [ "$1" == "demos" ]; then
 		baremetal_install_demos
 	elif [ "$1" == "vdi" ]; then
