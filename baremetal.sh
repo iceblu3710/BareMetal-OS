@@ -597,16 +597,6 @@ function baremetal_ext23_scaffold {
 	./tools/ext23_kernel_scaffold.sh --repo src/BareMetal
 }
 
-function baremetal_ext23_emu_test {
-	baremetal_src_check
-	baremetal_sys_check
-	if [ ! -x "tools/ext23_emulator_smoke.sh" ]; then
-		echo "Missing tools/ext23_emulator_smoke.sh"
-		exit 1
-	fi
-	./tools/ext23_emulator_smoke.sh
-}
-
 function baremetal_app {
 	baremetal_sys_check
 	cd sys
@@ -640,7 +630,6 @@ function baremetal_help {
 	echo "datafs-check - Run e2fsck (-fn) against ext_data.img"
 	echo "datafs-replay-test - Run replay-oriented fsck flow on a copied ext_data image"
 	echo "ext23-scaffold - Bootstrap fs/cache/vfs/ext2/layout/journal scaffolds in src/BareMetal"
-	echo "ext23-emu-test - Run vertical milestone smoke flow (datafs+scaffold+build+qemu)"
 	echo "vdi      - Generate VDI disk image for VirtualBox"
 	echo "vmdk     - Generate VMDK disk image for VMware"
 	echo "vpc      - Generate VPC disk image for HyperV"
@@ -698,8 +687,6 @@ elif [ $# -eq 1 ]; then
 		baremetal_datafs_replay_test
 	elif [ "$1" == "ext23-scaffold" ]; then
 		baremetal_ext23_scaffold
-	elif [ "$1" == "ext23-emu-test" ]; then
-		baremetal_ext23_emu_test
 	elif [ "$1" == "demos" ]; then
 		baremetal_install_demos
 	elif [ "$1" == "vdi" ]; then

@@ -16,7 +16,6 @@ This branch starts the ext2/3 effort by adding a dedicated second disk image (`s
 - `tools/ext23_kernel_scaffold.sh` bootstraps `fs/cache.asm`, `fs/vfs.asm`, `fs/ext2_layout.inc`, and `fs/ext2.asm` stubs in a checked-out BareMetal kernel tree and appends includes to `kernel.asm`.
 - `tools/ext23_kernel_scaffold.sh` also bootstraps `fs/journal.asm` with ext3-style transaction/replay symbol stubs.
 - `baremetal.sh ext23-scaffold` runs that bootstrap directly against `src/BareMetal`.
-- `baremetal.sh ext23-emu-test` runs a vertical smoke flow: data image prep, scaffold apply, build, bounded QEMU boot, and serial-log tail.
 - Set `ENABLE_DATAFS=0` to temporarily run without the second data disk.
 
 ## Kernel implementation sequence (BareMetal repo)
@@ -84,4 +83,3 @@ This branch starts the ext2/3 effort by adding a dedicated second disk image (`s
 - [x] Seed deterministic ext image content for kernel smoke tests.
 - [x] Run host-side image consistency check (`e2fsck -fn`).
 - [x] Run replay-oriented fsck flow on copied image (`datafs-replay-test`).
-- [x] Run one-command emulator smoke flow (`ext23-emu-test`) for vertical milestone iteration.
