@@ -264,27 +264,33 @@ function baremetal_update {
 function build_dir {
 	cd "$1"
 	if [ -e "build.sh" ]; then
-		./build.sh
+		./build.sh || { cd "$EXEC_DIR"; return 1; }
 	fi
 	if [ -e "install.sh" ]; then
-		./install.sh
+		./install.sh || { cd "$EXEC_DIR"; return 1; }
 	fi
 	if [ -e "Makefile" ]; then
-		make --quiet
+		make --quiet || { cd "$EXEC_DIR"; return 1; }
 	fi
-	mv bin/* "${OUTPUT_DIR}"
+	if ! compgen -G "bin/*" > /dev/null; then
+		echo "Build output missing in $1/bin"
+		cd "$EXEC_DIR"
+		return 1
+	fi
+	mv bin/* "${OUTPUT_DIR}" || { cd "$EXEC_DIR"; return 1; }
 	cd "$EXEC_DIR"
+	return 0
 }
 
 # Build the source code and create the software files
 function baremetal_build {
 	baremetal_src_check
 	echo -n "Assembling source code... "
-	build_dir "src/Pure64"
-	build_dir "src/BareMetal"
-	build_dir "src/BareMetal-Monitor"
-	build_dir "src/BMFS"
-	build_dir "src/BareMetal-Demo"
+	build_dir "src/Pure64" || { echo "FAILED"; exit 1; }
+	build_dir "src/BareMetal" || { echo "FAILED"; exit 1; }
+	build_dir "src/BareMetal-Monitor" || { echo "FAILED"; exit 1; }
+	build_dir "src/BMFS" || { echo "FAILED"; exit 1; }
+	build_dir "src/BareMetal-Demo" || { echo "FAILED"; exit 1; }
 	echo "OK"
 
 	init_imgs $BMFS_SIZE
@@ -597,6 +603,16 @@ function baremetal_ext23_scaffold {
 	./tools/ext23_kernel_scaffold.sh --repo src/BareMetal
 }
 
+function baremetal_ext23_emu_test {
+	baremetal_src_check
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_emulator_smoke.sh" ]; then
+		echo "Missing tools/ext23_emulator_smoke.sh"
+		exit 1
+	fi
+	./tools/ext23_emulator_smoke.sh
+}
+
 function baremetal_app {
 	baremetal_sys_check
 	cd sys
@@ -630,6 +646,7 @@ function baremetal_help {
 	echo "datafs-check - Run e2fsck (-fn) against ext_data.img"
 	echo "datafs-replay-test - Run replay-oriented fsck flow on a copied ext_data image"
 	echo "ext23-scaffold - Bootstrap fs/cache/vfs/ext2/layout/journal scaffolds in src/BareMetal"
+	echo "ext23-emu-test - Run vertical milestone smoke flow (datafs+scaffold+build+qemu)"
 	echo "vdi      - Generate VDI disk image for VirtualBox"
 	echo "vmdk     - Generate VMDK disk image for VMware"
 	echo "vpc      - Generate VPC disk image for HyperV"
@@ -687,6 +704,8 @@ elif [ $# -eq 1 ]; then
 		baremetal_datafs_replay_test
 	elif [ "$1" == "ext23-scaffold" ]; then
 		baremetal_ext23_scaffold
+	elif [ "$1" == "ext23-emu-test" ]; then
+		baremetal_ext23_emu_test
 	elif [ "$1" == "demos" ]; then
 		baremetal_install_demos
 	elif [ "$1" == "vdi" ]; then

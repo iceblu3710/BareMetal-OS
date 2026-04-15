@@ -56,7 +56,7 @@ cache_content='; SPDX-License-Identifier: BSD-3-Clause
 
 bits 64
 
-define FS_CACHE_SLOTS 64
+%define FS_CACHE_SLOTS 64
 
 global fs_cache_init
 global fs_cache_get
@@ -132,7 +132,7 @@ ext2_content='; SPDX-License-Identifier: BSD-3-Clause
 
 bits 64
 
-include "fs/ext2_layout.inc"
+%include "fs/ext2_layout.inc"
 
 global ext2_mount
 global ext2_read_inode
@@ -537,53 +537,53 @@ create_file "$EXT2_LAYOUT_INC" "$ext2_layout_content"
 create_file "$EXT2_ASM" "$ext2_content"
 create_file "$JOURNAL_ASM" "$journal_content"
 
-include_cache='include "fs/cache.asm"'
-include_vfs='include "fs/vfs.asm"'
-include_ext2='include "fs/ext2.asm"'
-include_journal='include "fs/journal.asm"'
+include_cache='%include "fs/cache.asm"'
+include_vfs='%include "fs/vfs.asm"'
+include_ext2='%include "fs/ext2.asm"'
+include_journal='%include "fs/journal.asm"'
 
-if grep -qF "$include_cache" "$KERNEL_ASM"; then
-	echo "Exists in kernel.asm: $include_cache"
-else
+normalize_include() { # arg 1 is include line
+	local include_line="$1"
 	if [[ "$DRY_RUN" -eq 1 ]]; then
-		echo "Would append to kernel.asm: $include_cache"
-	else
-		echo "$include_cache" >> "$KERNEL_ASM"
-		echo "Appended to kernel.asm: $include_cache"
+		if grep -qF "$include_line" "$KERNEL_ASM"; then
+			echo "Would normalize in kernel.asm: $include_line"
+		else
+			echo "Would insert into kernel.asm: $include_line"
+		fi
+		return
 	fi
-fi
 
-if grep -qF "$include_vfs" "$KERNEL_ASM"; then
-	echo "Exists in kernel.asm: $include_vfs"
-else
-	if [[ "$DRY_RUN" -eq 1 ]]; then
-		echo "Would append to kernel.asm: $include_vfs"
-	else
-		echo "$include_vfs" >> "$KERNEL_ASM"
-		echo "Appended to kernel.asm: $include_vfs"
-	fi
-fi
+	local tmpfile
+	tmpfile=$(mktemp)
+	awk -v include_line="$include_line" '
+	{
+		if ($0 == include_line) next
+		lines[++n]=$0
+		if ($0 ~ /%include[[:space:]]+"sysvar\.asm"/) sysvar_line=n
+	}
+	END {
+		if (n == 0) {
+			print include_line
+			exit
+		}
+		if (sysvar_line == 0) {
+			for (i = 1; i <= n; i++) print lines[i]
+			print include_line
+			exit
+		}
+		for (i = 1; i <= n; i++) {
+			if (i == sysvar_line) print include_line
+			print lines[i]
+		}
+	}
+	' "$KERNEL_ASM" > "$tmpfile"
+	mv "$tmpfile" "$KERNEL_ASM"
+	echo "Normalized in kernel.asm: $include_line"
+}
 
-if grep -qF "$include_ext2" "$KERNEL_ASM"; then
-	echo "Exists in kernel.asm: $include_ext2"
-else
-	if [[ "$DRY_RUN" -eq 1 ]]; then
-		echo "Would append to kernel.asm: $include_ext2"
-	else
-		echo "$include_ext2" >> "$KERNEL_ASM"
-		echo "Appended to kernel.asm: $include_ext2"
-	fi
-fi
-
-if grep -qF "$include_journal" "$KERNEL_ASM"; then
-	echo "Exists in kernel.asm: $include_journal"
-else
-	if [[ "$DRY_RUN" -eq 1 ]]; then
-		echo "Would append to kernel.asm: $include_journal"
-	else
-		echo "$include_journal" >> "$KERNEL_ASM"
-		echo "Appended to kernel.asm: $include_journal"
-	fi
-fi
+normalize_include "$include_cache"
+normalize_include "$include_vfs"
+normalize_include "$include_ext2"
+normalize_include "$include_journal"
 
 echo "ext2/3 scaffold step complete"
