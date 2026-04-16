@@ -11,8 +11,17 @@ This branch starts the ext2/3 effort by adding a dedicated second disk image (`s
 - `baremetal.sh datafs-info` prints ext metadata (when `dumpe2fs` is available).
 - `baremetal.sh datafs-manifest` prints the expected kernel selection values (`DATAFS_SERIAL`, `DATAFS_NVS_ID`).
 - `baremetal.sh datafs-populate` writes deterministic smoke-test content (`/bmtest/smoke/probe.txt`) into the ext image.
+- `baremetal.sh datafs-verify-probe` validates `/bmtest/smoke/probe.txt` against a host-side expected SHA-256 manifest.
+- `baremetal.sh datafs-suite-populate` seeds a deterministic multi-file fixture suite (`probe`, `alpha`, nested path, and ~96 KiB large file) and writes `sys/ext_data_fixture_manifest.tsv`.
+- `baremetal.sh datafs-suite-verify` validates every fixture path/hash/size from `sys/ext_data_fixture_manifest.tsv`.
+- `baremetal.sh datafs-ls`, `datafs-read`, `datafs-write`, and `datafs-mkdir` provide direct host-side browse/read/write primitives against `sys/ext_data.img` via `debugfs`.
 - `baremetal.sh datafs-check` runs host-side non-destructive fsck (`e2fsck -fn`) for quick consistency checks.
 - `baremetal.sh datafs-replay-test` runs a replay-oriented fsck flow on a copied image (`sys/ext_data_replay.img`) and captures logs in `sys/ext_data_replay.log`.
+- `baremetal.sh ext23-crash-test` runs an iterative crash harness flow with randomized forced-stop timing and per-iteration `e2fsck -fn` logs under `sys/ext23_crash_logs/`.
+- `baremetal.sh ext23-sprint1-check` validates Sprint-1 gate artifacts (data-image superblock magic and optional serial-log regex checks for NVS count + superblock probe output).
+- `baremetal.sh ext23-sprint2-check` validates Sprint-2 read-path gate artifacts (host probe-payload verification + optional serial-log lookup/read regex checks).
+- `baremetal.sh ext23-live-test` runs a bounded live boot flow and reports mount/readdir/read/write marker status from `sys/serial.log` (strict mode available in script).
+- `tools/ext23_emulator_smoke.sh` now populates the fixture suite so Sprint-2 checks can validate direct and indirect-read candidate files.
 - `tools/ext23_kernel_scaffold.sh` bootstraps `fs/cache.asm`, `fs/vfs.asm`, `fs/ext2_layout.inc`, and `fs/ext2.asm` stubs in a checked-out BareMetal kernel tree and appends includes to `kernel.asm`.
 - `tools/ext23_kernel_scaffold.sh` also bootstraps `fs/journal.asm` with ext3-style transaction/replay symbol stubs.
 - `baremetal.sh ext23-scaffold` runs that bootstrap directly against `src/BareMetal`.
@@ -58,6 +67,48 @@ This branch starts the ext2/3 effort by adding a dedicated second disk image (`s
 
 - The first target is correctness and recoverability, then performance.
 - Keep BMFS boot workflow unchanged while ext2/3 support matures.
+- Treat `master` as source-of-truth for kernel-side reality; when this document diverges, reconcile to `master` first and update this file in the same change.
+
+## Forward execution plan (from current scaffold state)
+
+This section is the active short-horizon plan to move from scaffolding to usable ext2 read support, then ext3 replay safety.
+
+### Sprint 1 — unblock second-disk access (must complete first)
+
+1. Land **Phase 1 Tasks 1.1–1.4** end-to-end so the kernel can address device 1 explicitly.
+2. Add temporary serial instrumentation for:
+   - discovered device count,
+   - selected datafs device index,
+   - one superblock-magic probe at byte offset 1024 on device 1.
+3. Gate completion on a reproducible check:
+   - `baremetal.sh ext23-emu-test` log shows `os_nvs_device_count == 2`;
+   - ext superblock magic `0xEF53` is observed from device 1.
+
+### Sprint 2 — mount + read-only vertical slice
+
+1. Land **Phase 2 Task 2.1–2.4** (cache init/read-through/flush).
+2. Land **Phase 3 Task 3.1–3.5** (mount, inode read, readdir, lookup, file read).
+3. Keep implementation scope strict:
+   - direct blocks only in first pass;
+   - single-indirect support can follow immediately after success criteria pass.
+4. Gate completion on a real payload read:
+   - `datafs-populate` creates `/bmtest/smoke/probe.txt`;
+   - kernel path lookup + read returns exact content in serial log.
+
+### Sprint 3 — write-path minimum + recovery harness
+
+1. Land **Phase 4 Task 4.1–4.6** for minimal create/write visibility.
+2. In parallel, add **Phase 6 Task 6.1** crash harness script to enforce regression checks.
+3. Only begin **Phase 5 journaling transaction engine** after:
+   - write-path create/write survives host `e2fsck -fn`,
+   - crash harness can repeatedly reproduce and validate failures.
+
+### Definition of near-term success
+
+- Data disk is always discoverable as a non-primary NVS target in two-disk boots.
+- Kernel can mount ext image, enumerate `/bmtest/smoke`, and read `probe.txt`.
+- Minimal file create/write path passes `e2fsck -fn` in host validation.
+- Crash harness exists and is wired into routine ext2/3 iteration.
 
 ## ext3 parity tracker
 
@@ -76,6 +127,16 @@ This branch starts the ext2/3 effort by adding a dedicated second disk image (`s
 - [~] Host-side replay validation scaffold prepared (`datafs-replay-test`).
 - [ ] Crash-recovery replay validation and consistency tests.
 
+## Priority queue (update each PR)
+
+Use this as the canonical "what is next" queue. Keep at most 5 active items.
+
+1. [ ] **P0:** Finish multi-device NVS enumeration and per-device I/O dispatch (Phase 1.1–1.4).
+2. [ ] **P0:** Wire data-disk selection variable and boot-time ext superblock probe (Phase 1.5 + verification glue).
+3. [ ] **P1:** Implement cache read-through path and dirty flush (Phase 2.2–2.4).
+4. [ ] **P1:** Implement ext2 mount + inode/directory/file read vertical slice (Phase 3.1–3.5).
+5. [ ] **P2:** Introduce automated crash/replay harness script scaffold (Phase 6.1).
+
 ## BareMetal-OS integration checklist (completed)
 
 - [x] Create and format dedicated ext data disk image.
@@ -85,6 +146,12 @@ This branch starts the ext2/3 effort by adding a dedicated second disk image (`s
 - [x] Run host-side image consistency check (`e2fsck -fn`).
 - [x] Run replay-oriented fsck flow on copied image (`datafs-replay-test`).
 - [x] Run one-command emulator smoke flow (`ext23-emu-test`) for vertical milestone iteration.
+- [x] Add crash/replay harness entrypoint (`ext23-crash-test`) for repeated forced-stop validation.
+- [x] Add Sprint-1 gate check entrypoint (`ext23-sprint1-check`) to verify ext data image + serial-log markers.
+- [x] Add Sprint-2 gate check entrypoint (`ext23-sprint2-check`) to verify probe payload + serial-log read-path markers.
+- [x] Add fixture-suite populate/verify commands for Sprint-2 read-path coverage (`datafs-suite-populate`, `datafs-suite-verify`).
+- [x] Add host-side ext image browse/read/write CLI (`datafs-ls`, `datafs-read`, `datafs-write`, `datafs-mkdir`) for rapid iteration.
+- [x] Add live-IO validation harness entrypoint (`ext23-live-test`) for mount/readdir/read/write signal checks.
 
 ---
 
