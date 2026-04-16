@@ -583,15 +583,121 @@ function baremetal_datafs_populate {
 	fi
 
 	tmp_payload=$(mktemp)
-	echo "BareMetal ext3 payload $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp_payload"
+	cat > "$tmp_payload" <<'EOF'
+BareMetal ext3 payload v1
+path=/bmtest/smoke/probe.txt
+EOF
 
 	# Create deterministic content used by future kernel-side read/write tests
 	debugfs -w -R "mkdir /bmtest" sys/ext_data.img > /dev/null 2>&1
 	debugfs -w -R "mkdir /bmtest/smoke" sys/ext_data.img > /dev/null 2>&1
 	debugfs -w -R "write $tmp_payload /bmtest/smoke/probe.txt" sys/ext_data.img > /dev/null
 
+	if [ -x "$(command -v sha256sum)" ]; then
+		sha256sum "$tmp_payload" | awk '{print $1}' > sys/ext_data_expected_probe.sha256
+	elif [ -x "$(command -v shasum)" ]; then
+		shasum -a 256 "$tmp_payload" | awk '{print $1}' > sys/ext_data_expected_probe.sha256
+	fi
+
 	rm -f "$tmp_payload"
 	echo "Wrote /bmtest/smoke/probe.txt to sys/ext_data.img"
+	if [ -f "sys/ext_data_expected_probe.sha256" ]; then
+		echo "Wrote expected hash to sys/ext_data_expected_probe.sha256"
+	fi
+}
+
+function baremetal_datafs_verify_probe {
+	baremetal_sys_check
+	if [ ! -f "sys/ext_data.img" ]; then
+		echo "sys/ext_data.img is missing. Use './baremetal.sh datafs' to create it."
+		exit 1
+	fi
+	if [ ! -x "$(command -v debugfs)" ]; then
+		echo "Install e2fsprogs to verify probe payload (missing debugfs)"
+		exit 1
+	fi
+	if [ ! -f "sys/ext_data_expected_probe.sha256" ]; then
+		echo "sys/ext_data_expected_probe.sha256 is missing. Run './baremetal.sh datafs-populate' first."
+		exit 1
+	fi
+
+	tmp_actual=$(mktemp)
+	debugfs -R "cat /bmtest/smoke/probe.txt" sys/ext_data.img > "$tmp_actual" 2>/dev/null
+
+	if [ -x "$(command -v sha256sum)" ]; then
+		actual_hash=$(sha256sum "$tmp_actual" | awk '{print $1}')
+	elif [ -x "$(command -v shasum)" ]; then
+		actual_hash=$(shasum -a 256 "$tmp_actual" | awk '{print $1}')
+	else
+		rm -f "$tmp_actual"
+		echo "Missing sha256 tool (sha256sum/shasum)"
+		exit 1
+	fi
+
+	expected_hash=$(tr -d ' \n\r' < sys/ext_data_expected_probe.sha256)
+	rm -f "$tmp_actual"
+
+	echo "expected_probe_sha256=$expected_hash"
+	echo "actual_probe_sha256=$actual_hash"
+	if [ "$actual_hash" != "$expected_hash" ]; then
+		echo "Probe payload verification failed."
+		exit 1
+	fi
+	echo "Probe payload verification passed."
+}
+
+function baremetal_datafs_suite_populate {
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_fixture_suite.sh" ]; then
+		echo "Missing tools/ext23_fixture_suite.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_fixture_suite.sh populate
+}
+
+function baremetal_datafs_suite_verify {
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_fixture_suite.sh" ]; then
+		echo "Missing tools/ext23_fixture_suite.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_fixture_suite.sh verify
+}
+
+function baremetal_datafs_ls {
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_datafs_cli.sh" ]; then
+		echo "Missing tools/ext23_datafs_cli.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_datafs_cli.sh ls "${1:-/}"
+}
+
+function baremetal_datafs_read {
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_datafs_cli.sh" ]; then
+		echo "Missing tools/ext23_datafs_cli.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_datafs_cli.sh read "$1"
+}
+
+function baremetal_datafs_write {
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_datafs_cli.sh" ]; then
+		echo "Missing tools/ext23_datafs_cli.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_datafs_cli.sh write "$1" "$2"
+}
+
+function baremetal_datafs_mkdir {
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_datafs_cli.sh" ]; then
+		echo "Missing tools/ext23_datafs_cli.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_datafs_cli.sh mkdir "$1"
 }
 
 function baremetal_ext23_scaffold {
@@ -611,6 +717,43 @@ function baremetal_ext23_emu_test {
 		exit 1
 	fi
 	./tools/ext23_emulator_smoke.sh
+}
+
+function baremetal_ext23_crash_test {
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_crash_test.sh" ]; then
+		echo "Missing tools/ext23_crash_test.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_crash_test.sh
+}
+
+function baremetal_ext23_sprint1_check {
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_sprint1_check.sh" ]; then
+		echo "Missing tools/ext23_sprint1_check.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_sprint1_check.sh
+}
+
+function baremetal_ext23_sprint2_check {
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_sprint2_check.sh" ]; then
+		echo "Missing tools/ext23_sprint2_check.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_sprint2_check.sh
+}
+
+function baremetal_ext23_live_test {
+	baremetal_src_check
+	baremetal_sys_check
+	if [ ! -x "tools/ext23_live_io_test.sh" ]; then
+		echo "Missing tools/ext23_live_io_test.sh or file is not executable"
+		exit 1
+	fi
+	./tools/ext23_live_io_test.sh
 }
 
 function baremetal_app {
@@ -643,10 +786,21 @@ function baremetal_help {
 	echo "datafs-info - Show ext filesystem metadata for sys/ext_data.img"
 	echo "datafs-manifest - Show expected kernel data disk selection metadata"
 	echo "datafs-populate - Seed ext_data.img with deterministic smoke-test files"
+	echo "datafs-verify-probe - Verify /bmtest/smoke/probe.txt against expected hash"
+	echo "datafs-suite-populate - Seed deterministic multi-file fixture suite and manifest"
+	echo "datafs-suite-verify - Verify fixture suite files against the saved manifest"
+	echo "datafs-ls [path] - Browse directory entries inside ext_data.img"
+	echo "datafs-read <path> - Read a file from ext_data.img"
+	echo "datafs-write <host-file> <path> - Write host file into ext_data.img"
+	echo "datafs-mkdir <path> - Create a directory inside ext_data.img"
 	echo "datafs-check - Run e2fsck (-fn) against ext_data.img"
 	echo "datafs-replay-test - Run replay-oriented fsck flow on a copied ext_data image"
 	echo "ext23-scaffold - Bootstrap fs/cache/vfs/ext2/layout/journal scaffolds in src/BareMetal"
 	echo "ext23-emu-test - Run vertical milestone smoke flow (datafs+scaffold+build+qemu)"
+	echo "ext23-crash-test - Run iterative crash/replay-oriented ext data image checks"
+	echo "ext23-sprint1-check - Validate Sprint-1 gates (ext superblock + serial log hints)"
+	echo "ext23-sprint2-check - Validate Sprint-2 read-path gates (probe payload + serial hints)"
+	echo "ext23-live-test - Run bounded live boot and check mount/readdir/read/write serial markers"
 	echo "vdi      - Generate VDI disk image for VirtualBox"
 	echo "vmdk     - Generate VMDK disk image for VMware"
 	echo "vpc      - Generate VPC disk image for HyperV"
@@ -698,6 +852,14 @@ elif [ $# -eq 1 ]; then
 		baremetal_datafs_manifest
 	elif [ "$1" == "datafs-populate" ]; then
 		baremetal_datafs_populate
+	elif [ "$1" == "datafs-verify-probe" ]; then
+		baremetal_datafs_verify_probe
+	elif [ "$1" == "datafs-suite-populate" ]; then
+		baremetal_datafs_suite_populate
+	elif [ "$1" == "datafs-suite-verify" ]; then
+		baremetal_datafs_suite_verify
+	elif [ "$1" == "datafs-ls" ]; then
+		baremetal_datafs_ls
 	elif [ "$1" == "datafs-check" ]; then
 		baremetal_datafs_check
 	elif [ "$1" == "datafs-replay-test" ]; then
@@ -706,6 +868,14 @@ elif [ $# -eq 1 ]; then
 		baremetal_ext23_scaffold
 	elif [ "$1" == "ext23-emu-test" ]; then
 		baremetal_ext23_emu_test
+	elif [ "$1" == "ext23-crash-test" ]; then
+		baremetal_ext23_crash_test
+	elif [ "$1" == "ext23-sprint1-check" ]; then
+		baremetal_ext23_sprint1_check
+	elif [ "$1" == "ext23-sprint2-check" ]; then
+		baremetal_ext23_sprint2_check
+	elif [ "$1" == "ext23-live-test" ]; then
+		baremetal_ext23_live_test
 	elif [ "$1" == "demos" ]; then
 		baremetal_install_demos
 	elif [ "$1" == "vdi" ]; then
@@ -730,5 +900,18 @@ elif [ $# -eq 2 ]; then
 		baremetal_install $2
 	elif [ "$1" == "setup" ]; then
 		baremetal_setup $2
+	elif [ "$1" == "datafs-ls" ]; then
+		baremetal_datafs_ls "$2"
+	elif [ "$1" == "datafs-read" ]; then
+		baremetal_datafs_read "$2"
+	elif [ "$1" == "datafs-mkdir" ]; then
+		baremetal_datafs_mkdir "$2"
+	elif [ "$1" == "datafs-write" ]; then
+		echo "Usage: bash ./baremetal.sh datafs-write <host-file> <ext-path>"
+		exit 1
+	fi
+elif [ $# -eq 3 ]; then
+	if [ "$1" == "datafs-write" ]; then
+		baremetal_datafs_write "$2" "$3"
 	fi
 fi
